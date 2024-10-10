@@ -1,17 +1,17 @@
-struct Stack {
+pub struct Stack {
     items: [u16; 16], // Array of 16 16-bit values
     top: usize,       // Index of the top element
 }
 
 impl Stack {
-    fn default() -> Self {
+    pub fn default() -> Self {
         Stack {
             items: [0; 16], // Initialize array with zeros
             top: 0,         // Start with an empty stack
         }
     }
 
-    fn push(&mut self, value: u16) -> Result<(), &'static str> {
+    pub fn push(&mut self, value: u16) -> Result<(), &'static str> {
         if self.top < 16 {
             self.items[self.top] = value; // Push value onto the stack
             self.top += 1; // Increment the top index
@@ -21,7 +21,7 @@ impl Stack {
         }
     }
 
-    fn pop(&mut self) -> Result<u16, &'static str> {
+    pub fn pop(&mut self) -> Result<u16, &'static str> {
         if self.top > 0 {
             self.top -= 1; // Decrement the top index
             Ok(self.items[self.top]) // Return the popped value
@@ -30,11 +30,11 @@ impl Stack {
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.top == 0 // Check if the stack is empty
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.top // Return the current size of the stack
     }
 }

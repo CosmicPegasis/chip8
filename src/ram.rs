@@ -1,19 +1,19 @@
 use std::fs::File;
 use std::io::{self, Read};
 
-struct RAM {
-    cart: [u8; 4096],
-    cart_size: usize,
+pub struct RAM {
+    pub cart: [u8; 4096],
+    pub cart_size: usize,
 }
 
 impl RAM {
-    fn default() -> Self {
+    pub fn default() -> Self {
         return RAM {
             cart: [0; 4096],
             cart_size: 0,
         };
     }
-    fn load(&mut self, path: &str) -> io::Result<()> {
+    pub fn load(&mut self, path: &str) -> io::Result<()> {
         let mut file = File::open(path)?;
 
         // buffer is a maximum of 4096 which is the same as my cartridge
@@ -22,8 +22,21 @@ impl RAM {
 
         self.cart[0x200..(0x200 + bytes_read)].copy_from_slice(&buffer[..bytes_read]);
 
-        self.cart_size = bytes_read;
+        self.cart_size = 0x200 + bytes_read;
 
+        Ok(())
+    }
+    pub fn read(&self, address: usize) -> Result<u8, &'static str> {
+        if address >= self.cart_size {
+            return Err("Address out of bounds");
+        }
+        Ok(self.cart[address])
+    }
+    pub fn write(&mut self, address: usize, value: u8) -> Result<(), &'static str> {
+        if address >= self.cart_size {
+            return Err("Address out of bounds");
+        }
+        self.cart[address] = value;
         Ok(())
     }
 }
