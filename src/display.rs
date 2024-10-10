@@ -6,9 +6,10 @@ use std::rc::Rc;
 // TODO Need to only execute ~700 instructions per second
 
 pub struct EmuDisplay {
-    inner: widget::Widget,
-    pixel_mat: Rc<RefCell<[[bool; 64]; 32]>>,
-    key_pressed: Rc<RefCell<Option<u8>>>,
+    pub inner: widget::Widget,
+    pub pixel_mat: Rc<RefCell<[[bool; 64]; 32]>>,
+    // TODO Change key pressed to allow for multiple key presses
+    pub key_pressed: Rc<RefCell<Option<u8>>>,
 }
 
 impl EmuDisplay {
@@ -27,8 +28,8 @@ impl EmuDisplay {
         let handle_key = key_pressed.clone();
         inner.draw(move |i| {
             let mat = draw_mat.borrow();
-            for row in 0..31 {
-                for col in 0..63 {
+            for row in 0..32 {
+                for col in 0..64 {
                     if mat[row as usize][col as usize] {
                         draw::draw_rect_fill(
                             i.x() + col * 5,
