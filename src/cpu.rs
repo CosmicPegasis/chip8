@@ -1,4 +1,5 @@
 use crate::display::EmuDisplay;
+use crate::keyboard;
 use crate::ram::RAM;
 use crate::register::Reg;
 use crate::stack::Stack;
@@ -11,7 +12,7 @@ pub struct CPU {
     memory: RAM,
     stack: Stack,
     display: EmuDisplay,
-    cycle_count: u32,
+    found_key: Option<u8>,
 }
 
 #[derive(Debug)]
@@ -50,16 +51,40 @@ impl CPU {
             memory: RAM::default(),
             stack: Stack::default(),
             display,
-            cycle_count: 0,
+            found_key: None,
         };
         cpu.reg.pc = 0x200;
         cpu
     }
+    fn setup_fonts(&mut self) {
+        let fonts = [
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+        ];
+        for i in 0..fonts.len() {
+            self.memory.write(0x50 + i, fonts[i]);
+        }
+    }
+
     pub fn load_rom(&mut self, rom: &str) {
         self.memory.load(rom).unwrap();
     }
     pub fn fetch(&mut self) -> u16 {
-        println!("PC: {:x}, Cycle: {}", self.reg.pc, self.cycle_count);
+        // println!("PC: {:x}, Cycle: {}", self.reg.pc, self.cycle_count);
         let opcode: u8 = match self.memory.read(self.reg.pc as usize) {
             Ok(opcode) => opcode,
             Err(e) => panic!("Error fetching upper byte: {}", e),
@@ -70,7 +95,6 @@ impl CPU {
             Err(e) => panic!("Error fetching lower byte: {}", e),
         };
         opcode = opcode | (lower as u16);
-        self.cycle_count += 1;
         opcode
     }
     pub fn run(&mut self) {
@@ -84,7 +108,7 @@ impl CPU {
             self.return_from_subroutine();
         } else {
             let decoded = Decoded::new(opcode);
-            println!("{:?}", decoded);
+            // println!("{:?}", decoded);
             match decoded.upper {
                 0x1 => self.jump_to_address(decoded),
                 0x2 => self.call_subroutine(decoded),
@@ -94,6 +118,7 @@ impl CPU {
                 0x6 => self.set_register(decoded),
                 0x7 => self.add_to_register(decoded),
                 0x8 => self.apply_op(decoded),
+                0x9 => self.skip_next_instruction_if_not_equal_register(decoded),
                 0xA => self.set_memory_addr(decoded),
                 0xB => self.jump_to_address_with_offset(decoded),
                 0xC => self.rnd_and(decoded),
@@ -106,7 +131,7 @@ impl CPU {
     }
 
     fn jump_to_address(&mut self, decoded: Decoded) {
-        println!("JMP {:x}", decoded.nnn);
+        // println!("JMP {:x}", decoded.nnn);
         self.reg.pc = decoded.nnn;
     }
 
@@ -146,6 +171,15 @@ impl CPU {
             self.reg.pc += 2;
         }
     }
+    fn skip_next_instruction_if_not_equal_register(&mut self, decoded: Decoded) {
+        println!("SNE V{:x} V{:x}", decoded.x, decoded.y);
+        if decoded.n != 0 {
+            panic!("Unknown Opcode: skip next with non zero lowest nibble (n)");
+        }
+        if self.reg.v[decoded.x as usize] != self.reg.v[decoded.y as usize] {
+            self.reg.pc += 2;
+        }
+    }
 
     fn set_register(&mut self, decoded: Decoded) {
         println!("SET V{:x} {:x}", decoded.x, decoded.nn);
@@ -155,7 +189,13 @@ impl CPU {
     fn add_to_register(&mut self, decoded: Decoded) {
         // Am I supposed to check for overflow?
         println!("ADD V{:x} {:x}", decoded.x, decoded.nn);
-        self.reg.v[decoded.x as usize] += decoded.nn;
+        let a = self.reg.v[decoded.x as usize] as u16;
+        let b = decoded.nn as u16;
+        if (a + b) > 255 {
+            self.reg.v[decoded.x as usize] = ((a + b) % 256) as u8;
+        } else {
+            self.reg.v[decoded.x as usize] += decoded.nn;
+        }
     }
 
     fn apply_op(&mut self, decoded: Decoded) {
@@ -182,30 +222,36 @@ impl CPU {
         println!("OR V{:x} V{:x}", decoded.x, decoded.y);
         self.reg.v[decoded.x as usize] =
             self.reg.v[decoded.x as usize] | self.reg.v[decoded.y as usize];
+        // quirk
+        // self.reg.v[0xF] = 0;
     }
 
     fn and_registers(&mut self, decoded: Decoded) {
         println!("AND V{:x} V{:x}", decoded.x, decoded.y);
         self.reg.v[decoded.x as usize] =
             self.reg.v[decoded.x as usize] & self.reg.v[decoded.y as usize];
+        // quirk
+        // self.reg.v[0xF] = 0;
     }
 
     fn xor_registers(&mut self, decoded: Decoded) {
         println!("XOR V{:x} V{:x}", decoded.x, decoded.y);
         self.reg.v[decoded.x as usize] =
             self.reg.v[decoded.x as usize] ^ self.reg.v[decoded.y as usize];
+        // quirk
+        // self.reg.v[0xF] = 0;
     }
 
     fn add_registers(&mut self, decoded: Decoded) {
         println!("ADD V{:x} V{:x}", decoded.x, decoded.y);
         let a = self.reg.v[decoded.x as usize] as u16;
         let b = self.reg.v[decoded.y as usize] as u16;
+        self.reg.v[decoded.x as usize] = (a + b) as u8;
         if (a + b) > 255 {
             self.reg.v[0xF] = 1;
         } else {
             self.reg.v[0xF] = 0;
         }
-        self.reg.v[decoded.x as usize] = (a + b) as u8;
     }
 
     fn sub_registers(&mut self, decoded: Decoded) {
@@ -213,32 +259,34 @@ impl CPU {
         let a = self.reg.v[decoded.x as usize];
         let b = self.reg.v[decoded.y as usize];
         if a > b {
-            self.reg.v[0xF] = 1;
             self.reg.v[decoded.x as usize] = a - b;
+            self.reg.v[0xF] = 1;
         } else {
-            self.reg.v[0xF] = 0;
             self.reg.v[decoded.x as usize] = ((256 + a as u16) - b as u16) as u8;
+            self.reg.v[0xF] = 0;
         }
     }
 
     fn shift_registers_right(&mut self, decoded: Decoded) {
         println!("SHR V{:x} V{:x}", decoded.x, decoded.y);
-        if self.reg.v[decoded.x as usize] & 0x1 == 1 {
+        let a = self.reg.v[decoded.x as usize];
+        self.reg.v[decoded.x as usize] = self.reg.v[decoded.x as usize] >> 1;
+        if a & 0x1 == 1 {
             self.reg.v[0xF] = 1;
         } else {
             self.reg.v[0xF] = 0;
         }
-        self.reg.v[decoded.x as usize] = self.reg.v[decoded.x as usize] >> 1;
     }
 
     fn shift_registers_left(&mut self, decoded: Decoded) {
-        println!("SHL V{:x} V{:x}", decoded.x, decoded.y);
-        if self.reg.v[decoded.x as usize] & 0x80 == 0x80 {
+        println!("SHL V{:x}", decoded.x);
+        let a = self.reg.v[decoded.x as usize];
+        self.reg.v[decoded.x as usize] = self.reg.v[decoded.x as usize] << 1;
+        if a & 0x80 == 0x80 {
             self.reg.v[0xF] = 1;
         } else {
             self.reg.v[0xF] = 0;
         }
-        self.reg.v[decoded.x as usize] = self.reg.v[decoded.x as usize] << 1;
     }
 
     fn subn_registers(&mut self, decoded: Decoded) {
@@ -246,11 +294,11 @@ impl CPU {
         let a = self.reg.v[decoded.x as usize];
         let b = self.reg.v[decoded.y as usize];
         if b > a {
-            self.reg.v[0xF] = 1;
             self.reg.v[decoded.x as usize] = b - a;
+            self.reg.v[0xF] = 1;
         } else {
-            self.reg.v[0xF] = 0;
             self.reg.v[decoded.x as usize] = ((256 + b as u16) - a as u16) as u8;
+            self.reg.v[0xF] = 0;
         }
     }
 
@@ -278,8 +326,8 @@ impl CPU {
             0x1E => self.add_i_register(decoded),
             0x29 => self.ld_font_char(decoded),
             0x33 => self.ld_bcd_register(decoded),
-            0x55 => self.ld_registers_memory(decoded),
-            0x65 => self.ld_memory_registers(decoded),
+            0x55 => self.sv_registers_to_mem(decoded),
+            0x65 => self.ld_registers_from_mem(decoded),
             _ => panic!("Unknown misc op {:x}", decoded.nn),
         }
     }
@@ -315,19 +363,23 @@ impl CPU {
         self.memory.write(self.reg.i as usize + 2, (num % 10) as u8);
     }
 
-    fn ld_registers_memory(&mut self, decoded: Decoded) {
-        println!("LD V{:x} [I]", decoded.x);
-        for i in 0..decoded.x {
-            self.reg.v[i as usize] = self.memory.read(self.reg.i as usize + i as usize).unwrap();
-        }
-    }
-
-    fn ld_memory_registers(&mut self, decoded: Decoded) {
+    fn sv_registers_to_mem(&mut self, decoded: Decoded) {
         println!("LD [I] V{:x}", decoded.x);
-        for i in 0..decoded.x {
+        for i in 0..decoded.x + 1 {
             self.memory
                 .write(self.reg.i as usize + i as usize, self.reg.v[i as usize]);
         }
+        // // quirk
+        // self.reg.i += decoded.x as u16 + 1;
+    }
+
+    fn ld_registers_from_mem(&mut self, decoded: Decoded) {
+        println!("LD V{:x} [I]", decoded.x);
+        for i in 0..decoded.x + 1 {
+            self.reg.v[i as usize] = self.memory.read(self.reg.i as usize + i as usize).unwrap();
+        }
+        // quirk
+        // self.reg.i += decoded.x as u16 + 1;
     }
 
     fn clear_screen(&mut self) {
@@ -380,15 +432,60 @@ impl CPU {
 
     fn ld_font_char(&mut self, decoded: Decoded) {
         println!("LD F V{:x}", decoded.x);
-        self.reg.i = self.reg.v[decoded.x as usize] as u16 * 5;
+        self.reg.i = self.reg.v[decoded.x as usize] as u16 * 5 + 0x50;
     }
 
     fn ld_register_key(&mut self, decoded: Decoded) {
-        panic!("Not implemented load register key");
+        println!("LD V{:x} K", decoded.x);
+        match self.found_key {
+            Some(k) => {
+                if let Some(k) = *self.display.last_key_up.borrow() {
+                    self.reg.v[decoded.x as usize] = k;
+                    self.found_key = None;
+                } else {
+                    self.reg.pc -= 2;
+                }
+            }
+            None => {
+                if let Some(k) = *self.display.last_key_down.borrow() {
+                    self.found_key = Some(k);
+                }
+                self.reg.pc -= 2;
+            }
+        }
     }
 
     fn skip_next_instruction_cond(&mut self, decoded: Decoded) {
-        panic!("Not implemented skip cond");
+        match decoded.nn {
+            0x9E => self.skip_next_instruction_if_key_pressed(decoded),
+            0xA1 => self.skip_next_instruction_if_key_not_pressed(decoded),
+            _ => panic!("Unknown skip cond {:x}", decoded.nn),
+        }
+    }
+
+    fn skip_next_instruction_if_key_pressed(&mut self, decoded: Decoded) {
+        println!("SKP V{:x}", decoded.x);
+        if self.display.keys_pressed.borrow()[self.reg.v[decoded.x as usize] as usize] {
+            self.reg.pc += 2;
+        }
+    }
+
+    fn skip_next_instruction_if_key_not_pressed(&mut self, decoded: Decoded) {
+        println!("SKNP V{:x}", decoded.x);
+        if !self.display.keys_pressed.borrow()[self.reg.v[decoded.x as usize] as usize] {
+            self.reg.pc += 2;
+        }
+    }
+    pub fn update_timers(&mut self) {
+        if self.reg.delay_timer > 0 {
+            self.reg.delay_timer -= 1;
+        }
+        if self.reg.sound_time > 0 {
+            self.reg.sound_time -= 1;
+        }
+    }
+    pub fn should_beep(&self) -> bool {
+        self.reg.sound_time > 0
     }
 }
 #[cfg(test)]
