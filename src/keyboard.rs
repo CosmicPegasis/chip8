@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::io::{self, Write};
-
 pub fn map_modern_to_chip8(modern_key: char) -> Option<u8> {
     match modern_key {
         '1' => Some(0x1),

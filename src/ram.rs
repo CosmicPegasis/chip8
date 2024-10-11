@@ -27,15 +27,9 @@ impl RAM {
         Ok(())
     }
     pub fn read(&self, address: usize) -> Result<u8, &'static str> {
-        if address >= self.cart_size {
-            return Err("Address out of bounds");
-        }
         Ok(self.cart[address])
     }
     pub fn write(&mut self, address: usize, value: u8) -> Result<(), &'static str> {
-        if address >= self.cart_size {
-            return Err("Address out of bounds");
-        }
         self.cart[address] = value;
         Ok(())
     }

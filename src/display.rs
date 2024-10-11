@@ -55,7 +55,7 @@ impl EmuDisplay {
                 }
             }
         });
-        inner.handle(move |i, ev| match ev {
+        inner.handle(move |_, ev| match ev {
             enums::Event::KeyDown => {
                 let key = app::event_key();
                 let key_char = key.to_char();
